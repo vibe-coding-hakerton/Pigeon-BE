@@ -1,13 +1,15 @@
 name: "📋 Story"
 description: "새로운 기능 개발을 위한 Story"
-title: "[Story]: "
+title: "feat(scope): "
 labels: ["story"]
 body:
   - type: markdown
     attributes:
       value: |
         ## Story 생성
-        DOD_AEC.md를 참조하여 AEC를 작성해주세요.
+        제목 형식: `feat(scope): 설명` (Conventional Commits)
+        - scope 예시: setup, auth, folder, mail, sync, classify, ui
+        - DOD_AEC.md를 참조하여 AEC를 작성해주세요.
 
   - type: textarea
     id: description
