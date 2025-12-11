@@ -7,4 +7,5 @@ app_name = 'classifier'
 urlpatterns = [
     path('classify/', views.ClassifyView.as_view(), name='classify'),
     path('classify-unclassified/', views.ClassifyUnclassifiedView.as_view(), name='classify-unclassified'),
+    path('<str:classification_id>/', views.ClassificationStatusView.as_view(), name='classification-status'),
 ]
