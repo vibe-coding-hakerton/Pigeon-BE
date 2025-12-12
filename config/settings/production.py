@@ -4,11 +4,32 @@ Production settings for Pigeon project.
 
 import os
 
+import dj_database_url
+
 from .base import *  # noqa: F403
 
 DEBUG = False
 
+# Validate required environment variables
+REQUIRED_ENV_VARS = ['SECRET_KEY', 'TOKEN_ENCRYPTION_KEY', 'DATABASE_URL']
+missing_vars = [var for var in REQUIRED_ENV_VARS if not os.environ.get(var)]
+if missing_vars:
+    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
+
+# Database - PostgreSQL via DATABASE_URL
+DATABASES = {
+    'default': dj_database_url.config(
+        default=os.environ.get('DATABASE_URL'),
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
+}
+
+# Static files with WhiteNoise
+MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')  # noqa: F405
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 
 # CORS Settings for Production

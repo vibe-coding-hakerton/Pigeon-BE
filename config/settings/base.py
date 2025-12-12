@@ -202,9 +202,8 @@ SPECTACULAR_SETTINGS = {
 
 # Token Encryption (Fernet)
 TOKEN_ENCRYPTION_KEY = os.environ.get('TOKEN_ENCRYPTION_KEY')
-if not TOKEN_ENCRYPTION_KEY:
-    raise ValueError("TOKEN_ENCRYPTION_KEY environment variable is not set. "
-                     "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"")
+# Note: TOKEN_ENCRYPTION_KEY is required for OAuth token encryption.
+# Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 
 # Google OAuth Settings
