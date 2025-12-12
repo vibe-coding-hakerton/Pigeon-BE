@@ -25,6 +25,7 @@ dependencies = [
     # LangChain & AI
     "langchain>=0.1",
     "langchain-google-genai>=1.0",
+    "langchain-openai>=0.1",
 
     # Cryptography
     "cryptography>=41.0",

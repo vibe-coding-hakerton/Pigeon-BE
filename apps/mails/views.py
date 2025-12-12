@@ -6,9 +6,12 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.folders.models import Folder
+
 from .models import Mail
 from .serializers import MailDetailSerializer, MailListSerializer, MailUpdateSerializer
 from .services import GmailAPIClient
+from .signals import bulk_move_update_counts, bulk_read_update_counts
 
 
 @extend_schema_view(
@@ -41,10 +44,21 @@ class MailViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Mail.objects.filter(user=self.request.user, is_deleted=False)
 
-        # 폴더 필터
+        # 폴더 필터 (자손 폴더 포함)
         folder_id = self.request.query_params.get('folder_id')
         if folder_id:
-            queryset = queryset.filter(folder_id=folder_id)
+            try:
+                folder = Folder.objects.get(id=folder_id, user=self.request.user)
+                # 해당 폴더와 모든 자손 폴더의 메일 포함
+                # path가 정확히 일치하거나, path/로 시작하는 자손 폴더
+                descendant_folders = Folder.objects.filter(
+                    user=self.request.user
+                ).filter(
+                    models.Q(path=folder.path) | models.Q(path__startswith=f"{folder.path}/")
+                ).values_list('id', flat=True)
+                queryset = queryset.filter(folder_id__in=list(descendant_folders))
+            except Folder.DoesNotExist:
+                queryset = queryset.filter(folder_id=folder_id)
 
         # 읽음 상태 필터
         is_read = self.request.query_params.get('is_read')
@@ -217,10 +231,15 @@ class MailViewSet(viewsets.ModelViewSet):
                 'message': '폴더를 찾을 수 없습니다.'
             }, status=status.HTTP_404_NOT_FOUND)
 
-        updated_count = Mail.objects.filter(
+        # 폴더 카운트 업데이트 (update() 전에 호출)
+        mails_queryset = Mail.objects.filter(
             id__in=mail_ids,
             user=request.user
-        ).update(folder=folder)
+        )
+        bulk_move_update_counts(mails_queryset, folder)
+
+        # 메일 이동
+        updated_count = mails_queryset.update(folder=folder)
 
         return Response({
             'status': 'success',
@@ -271,10 +290,16 @@ class MailViewSet(viewsets.ModelViewSet):
                 'message': '업데이트할 필드가 필요합니다.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        updated_count = Mail.objects.filter(
+        mails_queryset = Mail.objects.filter(
             id__in=mail_ids,
             user=request.user
-        ).update(**update_data)
+        )
+
+        # is_read 변경 시 폴더 카운트 업데이트
+        if 'is_read' in update_data:
+            bulk_read_update_counts(mails_queryset, update_data['is_read'])
+
+        updated_count = mails_queryset.update(**update_data)
 
         return Response({
             'status': 'success',

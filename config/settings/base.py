@@ -214,6 +214,9 @@ GOOGLE_REDIRECT_URI = os.environ.get('GOOGLE_REDIRECT_URI', 'http://localhost:80
 # Google API Settings
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
 
+# OpenAI API Settings
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+
 # Gmail API Scopes
 GMAIL_SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',

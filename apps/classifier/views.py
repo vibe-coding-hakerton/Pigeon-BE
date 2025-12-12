@@ -124,3 +124,50 @@ class ClassificationStatusView(APIView):
             'status': 'success',
             'data': state.to_dict()
         })
+
+
+@extend_schema(tags=['분류'])
+class ClassificationStopView(APIView):
+    """분류 작업 중단"""
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary='분류 작업 중단',
+        description='진행 중인 분류 작업을 중단합니다.',
+        responses={
+            200: OpenApiResponse(description='중단 성공'),
+            400: OpenApiResponse(description='중단할 수 없는 상태'),
+            404: OpenApiResponse(description='분류 작업 없음'),
+        },
+    )
+    def post(self, request, classification_id):
+        state = ClassificationState.get(classification_id)
+
+        if not state:
+            return Response({
+                'status': 'error',
+                'code': 'NOT_FOUND',
+                'message': '분류 작업을 찾을 수 없습니다.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        if state.user_id != request.user.id:
+            return Response({
+                'status': 'error',
+                'code': 'FORBIDDEN',
+                'message': '접근 권한이 없습니다.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if state.state != 'in_progress':
+            return Response({
+                'status': 'error',
+                'code': 'INVALID_STATE',
+                'message': '진행 중인 분류만 중단할 수 있습니다.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        state.cancel()
+
+        return Response({
+            'status': 'success',
+            'message': '분류 작업이 중단되었습니다.',
+            'data': state.to_dict()
+        })

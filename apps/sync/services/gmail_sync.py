@@ -2,11 +2,12 @@
 Gmail 동기화 서비스
 """
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.mails.models import Mail
@@ -84,7 +85,7 @@ class GmailSyncService:
 
     def start_sync(self, full_sync: bool = False) -> dict:
         """
-        동기화 시작
+        동기화 시작 (백그라운드에서 실행)
 
         Args:
             full_sync: True이면 전체 재동기화
@@ -108,23 +109,42 @@ class GmailSyncService:
         # 상태 초기화
         self.sync_state.reset(sync_type)
 
-        # 동기화 실행
-        try:
-            if sync_type == 'initial':
-                self._run_initial_sync()
-            else:
-                self._run_incremental_sync()
-        except Exception as e:
-            logger.exception(f"Sync failed for user {self.user.id}")
-            self.sync_state.state = 'failed'
-            self.sync_state.error = str(e)
-            raise
+        # 백그라운드 스레드에서 동기화 실행
+        user_id = self.user.id
+        thread = threading.Thread(
+            target=self._run_sync_in_background,
+            args=(user_id, sync_type),
+            daemon=True
+        )
+        thread.start()
 
         return {
             'sync_id': self.sync_state.sync_id,
             'type': sync_type,
             'started_at': self.sync_state.started_at.isoformat(),
         }
+
+    def _run_sync_in_background(self, user_id: int, sync_type: str):
+        """백그라운드에서 동기화 실행"""
+        try:
+            # 스레드에서 새로운 DB 연결 사용
+            connection.close()
+
+            # User 객체를 다시 가져옴 (스레드 안전)
+            from apps.accounts.models import User
+            self.user = User.objects.get(id=user_id)
+            self.gmail_client = GmailAPIClient(self.user)
+
+            if sync_type == 'initial':
+                self._run_initial_sync()
+            else:
+                self._run_incremental_sync()
+        except Exception as e:
+            logger.exception(f"Sync failed for user {user_id}")
+            self.sync_state.state = 'failed'
+            self.sync_state.error = str(e)
+        finally:
+            connection.close()
 
     def get_status(self) -> dict:
         """동기화 상태 조회"""

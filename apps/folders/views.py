@@ -83,6 +83,25 @@ class FolderViewSet(viewsets.ModelViewSet):
                 else:
                     root_folders.append(folder)
 
+            # 자손 폴더 포함 누적 카운트 계산 (하위 → 상위)
+            def calculate_cumulative_counts(folder):
+                """재귀적으로 자손 폴더의 카운트를 합산"""
+                cumulative_mail = folder.mail_count
+                cumulative_unread = folder.unread_count
+
+                for child in folder.children_list:
+                    child_mail, child_unread = calculate_cumulative_counts(child)
+                    cumulative_mail += child_mail
+                    cumulative_unread += child_unread
+
+                # 누적 카운트를 임시 속성으로 저장
+                folder.total_mail_count = cumulative_mail
+                folder.total_unread_count = cumulative_unread
+                return cumulative_mail, cumulative_unread
+
+            for root in root_folders:
+                calculate_cumulative_counts(root)
+
             serializer = FolderTreeSerializer(root_folders, many=True)
 
             # 전체 통계 계산

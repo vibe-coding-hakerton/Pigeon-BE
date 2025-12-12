@@ -1,12 +1,12 @@
 """
-Gemini API 클라이언트 (LangChain 사용)
+LLM API 클라이언트 (OpenAI GPT + Gemini 지원)
 """
 import json
 import logging
 import re
+import time
 
 from django.conf import settings
-from langchain_google_genai import ChatGoogleGenerativeAI
 from rest_framework.exceptions import ValidationError
 
 from ..prompts import BATCH_CLASSIFICATION_PROMPT, CLASSIFICATION_PROMPT, SYSTEM_PROMPT
@@ -15,43 +15,54 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """Gemini 2.5 Flash API 클라이언트"""
+    """LLM API 클라이언트 (GPT 우선, Gemini 폴백) - LangChain 통합"""
 
     def __init__(self):
-        api_key = getattr(settings, 'GOOGLE_API_KEY', None)
-        if not api_key:
+        self.llm = None
+        self.provider = None
+
+        # OpenAI API 키 확인 (우선)
+        openai_api_key = getattr(settings, 'OPENAI_API_KEY', None)
+        google_api_key = getattr(settings, 'GOOGLE_API_KEY', None)
+
+        if openai_api_key:
+            try:
+                from langchain_openai import ChatOpenAI
+                self.llm = ChatOpenAI(
+                    model="gpt-5-nano",
+                    api_key=openai_api_key,
+                    temperature=0.1,
+                    max_tokens=2048,
+                )
+                self.provider = 'openai'
+                logger.info("LLMClient initialized with OpenAI GPT (LangChain)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAI: {e}")
+
+        # OpenAI 실패 시 Gemini로 폴백
+        if self.llm is None and google_api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self.llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=google_api_key,
+                    temperature=0.1,
+                    max_tokens=2048,
+                )
+                self.provider = 'gemini'
+                logger.info("LLMClient initialized with Google Gemini (LangChain)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemini: {e}")
+
+        if self.llm is None:
             raise ValidationError({
                 'code': 'LLM_NOT_CONFIGURED',
-                'message': 'GOOGLE_API_KEY가 설정되지 않았습니다.'
+                'message': 'OPENAI_API_KEY 또는 GOOGLE_API_KEY가 설정되지 않았습니다.'
             })
-
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.1,
-            max_tokens=2048,
-        )
 
     def classify_mail(self, mail_data: dict, existing_folders: list) -> dict:
         """
         단일 메일 분류
-
-        Args:
-            mail_data: {
-                'id': int,
-                'subject': str,
-                'sender': str,
-                'snippet': str
-            }
-            existing_folders: [{'id': int, 'path': str}, ...]
-
-        Returns:
-            dict: {
-                'folder_path': str,
-                'is_new_folder': bool,
-                'confidence': float,
-                'reason': str
-            }
         """
         folders_str = self._format_folders(existing_folders)
         prompt = CLASSIFICATION_PROMPT.format(
@@ -73,17 +84,10 @@ class LLMClient:
 
     def classify_mails_batch(self, mails_data: list, existing_folders: list) -> list:
         """
-        배치 메일 분류 (최대 10개)
-
-        Args:
-            mails_data: [{'id': int, 'subject': str, 'sender': str, 'snippet': str}, ...]
-            existing_folders: [{'id': int, 'path': str}, ...]
-
-        Returns:
-            list: [{'mail_id': int, 'folder_path': str, ...}, ...]
+        배치 메일 분류 (최대 20개)
         """
-        if len(mails_data) > 10:
-            mails_data = mails_data[:10]
+        if len(mails_data) > 20:
+            mails_data = mails_data[:20]
 
         folders_str = self._format_folders(existing_folders)
         emails_str = self._format_emails(mails_data)
@@ -103,24 +107,37 @@ class LLMClient:
                 'message': f'AI 배치 분류 실패: {str(e)}'
             })
 
-    def _invoke_with_retry(self, prompt: str, max_retries: int = 2) -> str:
-        """LLM 호출 (재시도 포함)"""
+    def _invoke_with_retry(self, prompt: str, max_retries: int = 3) -> str:
+        """LLM 호출 (재시도 포함, 지수 백오프)"""
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                return self._invoke_llm(prompt)
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+                logger.warning(f"LLM invoke attempt {attempt + 1} failed ({self.provider}): {e}")
+
+                # Rate limit 에러면 더 긴 대기
+                if '429' in error_str or 'rate' in error_str or 'resource_exhausted' in error_str:
+                    wait_time = (2 ** attempt) * 5  # 5초, 10초, 20초
+                    logger.info(f"Rate limited, waiting {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    # 일반 에러는 짧은 대기
+                    time.sleep(2 ** attempt)  # 1초, 2초, 4초
+
+        raise last_error
+
+    def _invoke_llm(self, prompt: str) -> str:
+        """LangChain 통합 LLM 호출"""
         messages = [
             ("system", SYSTEM_PROMPT),
             ("human", prompt)
         ]
-
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                response = self.llm.invoke(messages)
-                return response.content
-            except Exception as e:
-                last_error = e
-                logger.warning(f"LLM invoke attempt {attempt + 1} failed: {e}")
-                continue
-
-        raise last_error
+        response = self.llm.invoke(messages)
+        return response.content
 
     def _format_folders(self, folders: list) -> str:
         """폴더 목록 포맷팅"""

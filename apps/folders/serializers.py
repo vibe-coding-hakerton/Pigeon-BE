@@ -89,6 +89,7 @@ class FolderSerializer(serializers.ModelSerializer):
 class FolderTreeSerializer(serializers.ModelSerializer):
     """폴더 트리 Serializer (재귀)"""
     children = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Folder
@@ -107,3 +108,9 @@ class FolderTreeSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'children_list'):
             return FolderTreeSerializer(obj.children_list, many=True).data
         return []
+
+    def get_unread_count(self, obj):
+        """자손 폴더 포함 누적 안읽음 개수 반환"""
+        if hasattr(obj, 'total_unread_count'):
+            return obj.total_unread_count
+        return obj.unread_count

@@ -2,10 +2,12 @@
 메일 분류 서비스
 """
 import logging
+import threading
+import time
 import uuid
 from typing import Optional
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.folders.models import Folder
@@ -85,6 +87,15 @@ class ClassificationState:
         self.error = error
         self.completed_at = timezone.now()
 
+    def cancel(self):
+        """분류 작업 취소"""
+        self.state = 'cancelled'
+        self.completed_at = timezone.now()
+
+    def is_cancelled(self) -> bool:
+        """취소 여부 확인"""
+        return self.state == 'cancelled'
+
     def to_dict(self) -> dict:
         return {
             'classification_id': self.classification_id,
@@ -113,7 +124,7 @@ class ClassifierService:
 
     def classify_mails(self, mail_ids: list) -> dict:
         """
-        지정된 메일 분류
+        지정된 메일 분류 (백그라운드에서 실행)
 
         Args:
             mail_ids: 분류할 메일 ID 목록
@@ -134,15 +145,17 @@ class ClassifierService:
             }
 
         state = ClassificationState.create(self.user.id)
-        mail_list = list(mails)
-        state.start(len(mail_list))
+        mail_ids_list = list(mails.values_list('id', flat=True))
+        state.start(len(mail_ids_list))
 
-        try:
-            self._process_classification(mail_list, state)
-        except Exception as e:
-            logger.exception(f"Classification failed for user {self.user.id}")
-            state.fail(str(e))
-            raise
+        # 백그라운드 스레드에서 분류 실행
+        user_id = self.user.id
+        thread = threading.Thread(
+            target=self._run_classification_in_background,
+            args=(user_id, mail_ids_list, state.classification_id),
+            daemon=True
+        )
+        thread.start()
 
         return {
             'classification_id': state.classification_id,
@@ -151,7 +164,7 @@ class ClassifierService:
         }
 
     def classify_unclassified(self) -> dict:
-        """미분류 메일 일괄 분류"""
+        """미분류 메일 일괄 분류 (백그라운드에서 실행)"""
         mails = Mail.objects.filter(
             user=self.user,
             is_classified=False,
@@ -164,22 +177,55 @@ class ClassifierService:
                 'message': '분류할 미분류 메일이 없습니다.',
             }
 
-        mail_list = list(mails)
         state = ClassificationState.create(self.user.id)
-        state.start(len(mail_list))
+        mail_ids_list = list(mails.values_list('id', flat=True))
+        state.start(len(mail_ids_list))
 
-        try:
-            self._process_classification(mail_list, state)
-        except Exception as e:
-            logger.exception(f"Unclassified batch classification failed for user {self.user.id}")
-            state.fail(str(e))
-            raise
+        # 백그라운드 스레드에서 분류 실행
+        user_id = self.user.id
+        thread = threading.Thread(
+            target=self._run_classification_in_background,
+            args=(user_id, mail_ids_list, state.classification_id),
+            daemon=True
+        )
+        thread.start()
 
         return {
             'classification_id': state.classification_id,
             'mail_count': state.total,
             'started_at': state.started_at.isoformat(),
         }
+
+    def _run_classification_in_background(self, user_id: int, mail_ids: list, classification_id: str):
+        """백그라운드에서 분류 실행"""
+        try:
+            # 스레드에서 새로운 DB 연결 사용
+            connection.close()
+
+            # User와 Mail 객체를 다시 가져옴 (스레드 안전)
+            from apps.accounts.models import User
+            self.user = User.objects.get(id=user_id)
+
+            mails = Mail.objects.filter(
+                user=self.user,
+                id__in=mail_ids,
+                is_deleted=False
+            )
+            mail_list = list(mails)
+
+            state = ClassificationState.get(classification_id)
+            if not state:
+                logger.error(f"Classification state not found: {classification_id}")
+                return
+
+            self._process_classification(mail_list, state)
+        except Exception as e:
+            logger.exception(f"Classification failed for user {user_id}")
+            state = ClassificationState.get(classification_id)
+            if state:
+                state.fail(str(e))
+        finally:
+            connection.close()
 
     def get_classification_status(self, classification_id: str) -> dict:
         """분류 상태 조회"""
@@ -195,11 +241,25 @@ class ClassifierService:
             .values('id', 'path', 'name', 'depth')
         )
 
-        # 배치 분류 시도 (10개씩)
-        batch_size = 10
+        # 배치 분류 시도 (20개씩, 배치 간 딜레이)
+        batch_size = 20
         for i in range(0, len(mails), batch_size):
+            # 취소 확인
+            if state.is_cancelled():
+                logger.info(f"Classification cancelled for user {self.user.id}")
+                return
+
             batch = mails[i:i + batch_size]
             self._classify_batch(batch, existing_folders, state)
+
+            # 취소 확인 (배치 후)
+            if state.is_cancelled():
+                logger.info(f"Classification cancelled for user {self.user.id}")
+                return
+
+            # 다음 배치 전 대기 (rate limit 방지)
+            if i + batch_size < len(mails):
+                time.sleep(3)
 
         state.complete()
         logger.info(
