@@ -1,1 +1,1 @@
-web: DJANGO_SETTINGS_MODULE=config.settings.production python manage.py collectstatic --noinput && DJANGO_SETTINGS_MODULE=config.settings.production python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+web: DJANGO_SETTINGS_MODULE=config.settings.production python manage.py collectstatic --noinput && DJANGO_SETTINGS_MODULE=config.settings.production python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --preload --timeout 120 --log-level debug
