@@ -9,7 +9,7 @@ from django.conf import settings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from rest_framework.exceptions import ValidationError
 
-from ..prompts import SYSTEM_PROMPT, CLASSIFICATION_PROMPT, BATCH_CLASSIFICATION_PROMPT
+from ..prompts import BATCH_CLASSIFICATION_PROMPT, CLASSIFICATION_PROMPT, SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 

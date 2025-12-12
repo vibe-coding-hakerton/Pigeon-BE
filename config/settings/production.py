@@ -2,7 +2,9 @@
 Production settings for Pigeon project.
 """
 
-from .base import *
+import os
+
+from .base import *  # noqa: F403
 
 DEBUG = False
 

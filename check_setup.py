@@ -16,10 +16,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
 
 # Django setup
 import django
+
 django.setup()
 
 from django.conf import settings
 from django.core.management import call_command
+
 from apps.accounts.models import User
 from apps.folders.models import Folder
 from apps.mails.models import Mail

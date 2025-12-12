@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.folders.models import Folder
 from apps.mails.models import Mail
+
 from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)

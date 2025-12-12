@@ -1,18 +1,18 @@
 """
 분류 API Views
 """
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .serializers import (
-    ClassifyRequestSerializer,
     ClassificationStartResponseSerializer,
     ClassificationStatusResponseSerializer,
+    ClassifyRequestSerializer,
 )
-from .services import ClassifierService, ClassificationState
+from .services import ClassificationState, ClassifierService
 
 
 @extend_schema(tags=['분류'])
